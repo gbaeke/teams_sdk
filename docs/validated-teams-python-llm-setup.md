@@ -72,6 +72,23 @@ flowchart TD
     C --> D["Bot replies with Teams name, user id, object id, tenant id"]
 ```
 
+## Teams AI Response Enhancements
+
+Text replies use Teams-native AI metadata and suggested prompts:
+
+- `MessageActivityInput().add_ai_generated()` marks the response as AI-generated in Teams.
+- `with_suggested_actions(...)` adds one-click prompt chips below the reply.
+
+Current suggested prompts:
+
+```text
+Weather in Paris
+Who am I?
+Explain this bot
+```
+
+Suggested prompt chips use `CardActionType.IM_BACK`, so selecting one sends the prompt text back through the normal `on_message` handler.
+
 ## 1. Check Teams CLI Status
 
 From any folder:

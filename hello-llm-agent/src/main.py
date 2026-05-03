@@ -13,7 +13,13 @@ from openai.types.responses import (
     ResponseInputParam,
 )
 
-from microsoft_teams.api import MessageActivity
+from microsoft_teams.api import (
+    CardAction,
+    CardActionType,
+    MessageActivity,
+    MessageActivityInput,
+    SuggestedActions,
+)
 from microsoft_teams.apps import ActivityContext, App
 from src.weather_card import create_weather_card
 from src.weather import get_current_weather
@@ -47,6 +53,24 @@ WEATHER_TOOL: FunctionToolParam = {
     "strict": True,
 }
 
+SUGGESTED_PROMPTS = [
+    CardAction(
+        type=CardActionType.IM_BACK,
+        title="Weather in Paris",
+        value="weather in Paris",
+    ),
+    CardAction(
+        type=CardActionType.IM_BACK,
+        title="Who am I?",
+        value="who am I?",
+    ),
+    CardAction(
+        type=CardActionType.IM_BACK,
+        title="Explain this bot",
+        value="explain what this bot can do",
+    ),
+]
+
 
 @app.on_message
 async def handle_message(ctx: ActivityContext[MessageActivity]) -> None:
@@ -54,7 +78,7 @@ async def handle_message(ctx: ActivityContext[MessageActivity]) -> None:
     user_text = (ctx.activity.text or "").strip()
 
     if not user_text:
-        await ctx.send("Send me a message and I will answer with an LLM.")
+        await _send_ai_text(ctx, "Send me a message and I will answer with an LLM.")
         return
 
     if _is_who_am_i_question(user_text):
@@ -107,7 +131,7 @@ async def handle_message(ctx: ActivityContext[MessageActivity]) -> None:
             input=follow_up_input,
         )
 
-    await ctx.send(response.output_text)
+    await _send_ai_text(ctx, response.output_text)
 
 
 async def _run_weather_tool(call: ResponseFunctionToolCall) -> dict[str, object]:
@@ -117,6 +141,20 @@ async def _run_weather_tool(call: ResponseFunctionToolCall) -> dict[str, object]
         return await get_current_weather(str(location))
     except (httpx.HTTPError, json.JSONDecodeError) as exc:
         return {"error": f"Weather lookup failed: {exc}"}
+
+
+async def _send_ai_text(ctx: ActivityContext[MessageActivity], text: str) -> None:
+    message = (
+        MessageActivityInput(text=text)
+        .add_ai_generated()
+        .with_suggested_actions(
+            SuggestedActions(
+                to=[ctx.activity.from_.id],
+                actions=SUGGESTED_PROMPTS,
+            )
+        )
+    )
+    await ctx.send(message)
 
 
 def _is_who_am_i_question(text: str) -> bool:
@@ -140,12 +178,15 @@ async def _handle_who_am_i_from_teams(ctx: ActivityContext[MessageActivity]) -> 
     tenant_id = conversation.tenant_id or "not provided"
     conversation_type = conversation.conversation_type or "not provided"
 
-    await ctx.send(
-        f"Teams says you are **{name}**.\n\n"
-        f"- Teams user ID: `{teams_user_id}`\n"
-        f"- Entra object ID: `{aad_object_id}`\n"
-        f"- Tenant ID: `{tenant_id}`\n"
-        f"- Conversation type: `{conversation_type}`"
+    await _send_ai_text(
+        ctx,
+        (
+            f"Teams says you are **{name}**.\n\n"
+            f"- Teams user ID: `{teams_user_id}`\n"
+            f"- Entra object ID: `{aad_object_id}`\n"
+            f"- Tenant ID: `{tenant_id}`\n"
+            f"- Conversation type: `{conversation_type}`"
+        ),
     )
 
 
