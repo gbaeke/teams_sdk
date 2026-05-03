@@ -89,6 +89,35 @@ Explain this bot
 
 Suggested prompt chips use `CardActionType.IM_BACK`, so selecting one sends the prompt text back through the normal `on_message` handler.
 
+## Proactive Notifications via MCP
+
+The bot embeds an MCP (Model Context Protocol) server in the same process as the Teams bot, so external automations can send proactive messages into Teams without first receiving an inbound activity. The MCP server exposes a `notify(aad_object_id, message)` tool that looks up a cached personal-chat conversation id and posts to it through the bot's adapter.
+
+A user must DM the bot at least once in personal scope before they are notifiable. On every personal-scope inbound activity, the bot caches `aad_object_id` → `conversation.id` under the storage key `convref:<aad_object_id>`. The `notify` tool reads that cache and calls `app.send(conversation_id=..., activity=message)`.
+
+```mermaid
+flowchart TD
+    A["User DMs the bot once (personal scope)"] --> B["handle_message reads ctx.activity.from_ and conversation"]
+    B --> C["ctx.storage saves convref:<aad_object_id> = conversation.id"]
+    D["External automation calls MCP notify(aad_object_id, message)"] --> E["Tool reads convref from app.storage"]
+    E --> F{"Cached?"}
+    F -- "No" --> G["Return ok=false: ask user to DM the bot first"]
+    F -- "Yes" --> H["app.send(conversation_id, activity=message)"]
+    H --> I["Bot posts the message into the user's personal chat"]
+```
+
+Key wiring:
+
+- `mcp = FastMCP("hello-llm-agent")` from `mcp.server.fastmcp`.
+- Two tools registered with `@mcp.tool()`: `notify(aad_object_id, message)` for sending, and `list_known_users()` to enumerate cached ids during testing.
+- The bot's default adapter is `FastAPIAdapter`. In `main()`, after `app.initialize()` and before `app.start()`, the MCP server's `streamable_http_app()` is mounted on the same FastAPI app via `adapter.app.mount("/", mcp_http_app)` and its lifespan is appended to `adapter.lifespans`. The MCP endpoint is then reachable at `https://<your-host>/mcp`, sharing host and port with `/api/messages`.
+
+For demo / local development the cache lives in `LocalStorage` (in-process, wipes on restart). For production, swap the app's storage for a durable `Storage` subclass — the handler and the MCP tool code do not change.
+
+Resolving an email such as `admin@<your-tenant>` to an `aad_object_id` is a single Microsoft Graph call (`GET /users/<upn>?$select=id`) on the calling side. Cache the result, or expose a sibling MCP tool to do the resolution in-server.
+
+Test by pointing the [MCP Inspector](https://github.com/modelcontextprotocol/inspector) at `https://<your-ngrok-domain>/mcp`, listing tools, and calling `notify` with a captured `aad_object_id` and a message.
+
 ## 1. Check Teams CLI Status
 
 From any folder:
@@ -140,10 +169,13 @@ In `hello-llm-agent/pyproject.toml`, include:
 dependencies = [
   "dotenv>=0.9.9",
   "httpx>=0.28.0",
+  "mcp>=1.27.0",
   "microsoft-teams-apps",
   "openai>=2.0.0"
 ]
 ```
+
+`mcp` is required for the proactive notification flow described in [Proactive Notifications via MCP](#proactive-notifications-via-mcp).
 
 ## 4. Add App-Local Environment Settings
 

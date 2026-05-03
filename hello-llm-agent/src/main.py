@@ -6,6 +6,7 @@ from typing import Any, cast
 
 import httpx
 from dotenv import load_dotenv
+from mcp.server.fastmcp import FastMCP
 from openai import AsyncOpenAI, BadRequestError, NotFoundError
 from openai.types.responses import (
     FunctionToolParam,
@@ -25,6 +26,7 @@ from microsoft_teams.api import (
     SuggestedActions,
 )
 from microsoft_teams.apps import ActivityContext, App
+from microsoft_teams.apps.http.fastapi_adapter import FastAPIAdapter
 from src.weather_card import create_weather_card
 from src.weather import get_current_weather
 
@@ -38,6 +40,41 @@ app = App()
 app.tab("about", str(APP_DIR / "static" / "about"))
 client = AsyncOpenAI()
 model = os.getenv("OPENAI_MODEL", "gpt-5.2")
+
+mcp = FastMCP("hello-llm-agent")
+
+
+def _convref_key(aad_object_id: str) -> str:
+    return f"convref:{aad_object_id}"
+
+
+@mcp.tool()
+async def notify(aad_object_id: str, message: str) -> dict[str, object]:
+    """Send a one-way notification to a Teams user.
+
+    The user must have messaged the bot at least once in a personal (1:1)
+    chat so the bot has cached their conversation id. Look up `aad_object_id`
+    via the bot's "who am I" command or the bot's logs.
+    """
+    conversation_id = await app.storage.async_get(_convref_key(aad_object_id))
+    if conversation_id is None:
+        return {
+            "ok": False,
+            "error": "no cached conversation; ask the user to DM the bot once first",
+            "aad_object_id": aad_object_id,
+        }
+    try:
+        await app.send(conversation_id=str(conversation_id), activity=message)
+        return {"ok": True, "aad_object_id": aad_object_id}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc), "aad_object_id": aad_object_id}
+
+
+@mcp.tool()
+async def list_known_users() -> list[str]:
+    """List the AAD object ids the bot has captured personal-chat conversations for."""
+    keys = getattr(app.storage, "keys", [])
+    return [k.removeprefix("convref:") for k in keys if k.startswith("convref:")]
 
 WEATHER_TOOL: FunctionToolParam = {
     "type": "function",
@@ -91,6 +128,19 @@ async def handle_message(ctx: ActivityContext[MessageActivity]) -> None:
     ctx.activity.strip_mentions_text()
     user_text = (ctx.activity.text or "").strip()
     ctx.logger.info("incoming text=%r", user_text)
+
+    # Cache the conversation id for proactive (MCP-driven) notifications.
+    sender = ctx.activity.from_
+    conversation = ctx.activity.conversation
+    if conversation.conversation_type == "personal" and sender.aad_object_id:
+        await ctx.storage.async_set(
+            _convref_key(sender.aad_object_id), conversation.id
+        )
+        ctx.logger.info(
+            "convref save aad_object_id=%s conversation_id=%s",
+            sender.aad_object_id,
+            conversation.id,
+        )
 
     if not user_text:
         await _send_ai_text(ctx, "Send me a message and I will answer with an LLM.")
@@ -355,8 +405,18 @@ async def _handle_who_am_i_from_teams(ctx: ActivityContext[MessageActivity]) -> 
     )
 
 
+async def _serve() -> None:
+    await app.initialize()
+    adapter = app.server.adapter
+    assert isinstance(adapter, FastAPIAdapter)
+    mcp_http_app = mcp.streamable_http_app()
+    adapter.lifespans.append(mcp_http_app.router.lifespan_context)
+    adapter.app.mount("/", mcp_http_app)
+    await app.start()
+
+
 def main():
-    asyncio.run(app.start())
+    asyncio.run(_serve())
 
 
 if __name__ == "__main__":
