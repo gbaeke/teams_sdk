@@ -10,6 +10,8 @@ A minimal Microsoft Teams Python bot that uses the OpenAI Responses API, exposes
 - `hello-llm-agent/src/weather_card.py`: Adaptive Card rendering for weather results.
 - `docs/validated-teams-python-llm-setup.md`: known-working setup and validation steps.
 
+The app also includes a no-auth `who am I?` route that uses Teams activity metadata.
+
 ## Quick Start
 
 ```bash

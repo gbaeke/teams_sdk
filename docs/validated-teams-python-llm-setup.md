@@ -61,6 +61,17 @@ flowchart TD
     H --> I["Bot replies in Teams with visual weather card"]
 ```
 
+## Identity Flow
+
+The app answers "who am I?" from the Teams activity metadata. This does not require Microsoft Graph because Teams already sends basic sender identity metadata with each incoming activity.
+
+```mermaid
+flowchart TD
+    A["User asks who am I?"] --> B["Read ctx.activity.from_"]
+    B --> C["Read ctx.activity.conversation"]
+    C --> D["Bot replies with Teams name, user id, object id, tenant id"]
+```
+
 ## 1. Check Teams CLI Status
 
 From any folder:
@@ -149,6 +160,7 @@ The app uses:
 - `src/main.py` for Teams message handling and OpenAI tool orchestration.
 - `src/weather.py` for Open-Meteo geocoding and weather lookup.
 - `src/weather_card.py` for the Adaptive Card weather response.
+- `ctx.activity.from_` and `ctx.activity.conversation` for the no-auth "who am I?" route.
 
 The environment loader reads the repo-root `.env` first, then app-local `.env` with override:
 

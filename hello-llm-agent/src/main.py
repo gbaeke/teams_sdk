@@ -56,6 +56,10 @@ async def handle_message(ctx: ActivityContext[MessageActivity]) -> None:
         await ctx.send("Send me a message and I will answer with an LLM.")
         return
 
+    if _is_who_am_i_question(user_text):
+        await _handle_who_am_i_from_teams(ctx)
+        return
+
     response = await client.responses.create(
         model=model,
         instructions=(
@@ -112,6 +116,36 @@ async def _run_weather_tool(call: ResponseFunctionToolCall) -> dict[str, object]
         return await get_current_weather(str(location))
     except (httpx.HTTPError, json.JSONDecodeError) as exc:
         return {"error": f"Weather lookup failed: {exc}"}
+
+
+def _is_who_am_i_question(text: str) -> bool:
+    normalized = text.strip().lower().rstrip("?!.")
+    return normalized in {
+        "who am i",
+        "whoami",
+        "/whoami",
+        "what is my name",
+        "what's my name",
+    }
+
+
+async def _handle_who_am_i_from_teams(ctx: ActivityContext[MessageActivity]) -> None:
+    sender = ctx.activity.from_
+    conversation = ctx.activity.conversation
+
+    name = sender.name or "unknown name"
+    aad_object_id = sender.aad_object_id or "not provided"
+    teams_user_id = sender.id or "not provided"
+    tenant_id = conversation.tenant_id or "not provided"
+    conversation_type = conversation.conversation_type or "not provided"
+
+    await ctx.send(
+        f"Teams says you are **{name}**.\n\n"
+        f"- Teams user ID: `{teams_user_id}`\n"
+        f"- Entra object ID: `{aad_object_id}`\n"
+        f"- Tenant ID: `{tenant_id}`\n"
+        f"- Conversation type: `{conversation_type}`"
+    )
 
 
 def main():
