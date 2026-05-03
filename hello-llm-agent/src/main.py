@@ -2,13 +2,14 @@ import asyncio
 import json
 import os
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import httpx
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
 from openai.types.responses import (
     FunctionToolParam,
+    Response as OpenAIResponse,
     ResponseFunctionToolCall,
     ResponseInputParam,
 )
@@ -85,15 +86,15 @@ async def handle_message(ctx: ActivityContext[MessageActivity]) -> None:
         await _handle_who_am_i_from_teams(ctx)
         return
 
-    response = await client.responses.create(
-        model=model,
+    response = await _stream_llm_text(
+        ctx,
         instructions=(
             "You are a concise assistant running inside Microsoft Teams. "
             "Answer clearly and keep responses short unless the user asks for detail. "
             "When the user asks for current weather, use the get_current_weather tool."
         ),
+        input=cast(ResponseInputParam, user_text),
         tools=[WEATHER_TOOL],
-        input=user_text,
     )
 
     tool_calls = [
@@ -121,17 +122,68 @@ async def handle_message(ctx: ActivityContext[MessageActivity]) -> None:
                 ],
             ],
         )
-        response = await client.responses.create(
-            model=model,
+        response = await _stream_llm_text(
+            ctx,
             instructions=(
                 "Use the weather tool result to answer the user. "
                 "Mention the location, conditions, temperature, and source."
             ),
-            previous_response_id=response.id,
             input=follow_up_input,
+            previous_response_id=response.id,
         )
 
-    await _send_ai_text(ctx, response.output_text)
+    await _finalize_ai_stream(ctx)
+
+
+async def _stream_llm_text(
+    ctx: ActivityContext[MessageActivity],
+    *,
+    instructions: str,
+    input: ResponseInputParam,
+    tools: list[FunctionToolParam] | None = None,
+    previous_response_id: str | None = None,
+) -> OpenAIResponse:
+    """Run the Responses API with streaming and forward text deltas to the Teams stream."""
+    kwargs: dict[str, Any] = {
+        "model": model,
+        "instructions": instructions,
+        "input": input,
+        "stream": True,
+    }
+    if tools is not None:
+        kwargs["tools"] = tools
+    if previous_response_id is not None:
+        kwargs["previous_response_id"] = previous_response_id
+
+    response_stream = await client.responses.create(**kwargs)
+
+    final_response: OpenAIResponse | None = None
+    async for event in response_stream:
+        if event.type == "response.output_text.delta":
+            if event.delta:
+                ctx.stream.emit(event.delta)
+        elif event.type == "response.completed":
+            final_response = event.response
+
+    if final_response is None:
+        raise RuntimeError("Response stream ended without a completion event.")
+    return final_response
+
+
+async def _finalize_ai_stream(ctx: ActivityContext[MessageActivity]) -> None:
+    """Attach the AI-generated label and suggested prompts, then close the stream."""
+    final = (
+        MessageActivityInput()
+        .add_ai_generated()
+        .with_suggested_actions(
+            SuggestedActions(
+                to=[ctx.activity.from_.id],
+                actions=SUGGESTED_PROMPTS,
+            )
+        )
+    )
+    ctx.stream.emit(final)
+    await ctx.stream.close()
 
 
 async def _run_weather_tool(call: ResponseFunctionToolCall) -> dict[str, object]:
