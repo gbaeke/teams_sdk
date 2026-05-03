@@ -3,7 +3,15 @@ from __future__ import annotations
 from typing import Any, Literal, cast
 
 from microsoft_teams.api import MessageActivityInput
-from microsoft_teams.cards import AdaptiveCard, Column, ColumnSet, Fact, FactSet, TextBlock
+from microsoft_teams.cards import (
+    AdaptiveCard,
+    Column,
+    ColumnSet,
+    Fact,
+    FactSet,
+    OpenUrlAction,
+    TextBlock,
+)
 
 TextColor = Literal["Default", "Dark", "Light", "Accent", "Good", "Warning", "Attention"]
 
@@ -16,6 +24,7 @@ def create_weather_card(weather: dict[str, Any]) -> MessageActivityInput:
     apparent_temperature = str(weather.get("apparent_temperature") or "n/a")
     source = str(weather.get("source") or "Open-Meteo")
     updated = str(weather.get("time") or "unknown time")
+    source_url = str(weather.get("source_url") or "")
     icon = _weather_icon(weather.get("weather_code"))
     accent = _weather_accent(weather.get("weather_code"))
 
@@ -86,6 +95,14 @@ def create_weather_card(weather: dict[str, Any]) -> MessageActivityInput:
                 wrap=True,
             ),
         ],
+        actions=[
+            OpenUrlAction(
+                title="Open Open-Meteo data",
+                url=source_url,
+            )
+        ]
+        if source_url
+        else None,
     )
 
     return MessageActivityInput(summary=f"Weather for {location_name}").add_card(card)

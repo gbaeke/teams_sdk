@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import urlencode
 
 import httpx
 
 GEOCODING_URL = "https://geocoding-api.open-meteo.com/v1/search"
 FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
+CURRENT_FIELDS = (
+    "temperature_2m,relative_humidity_2m,apparent_temperature,"
+    "precipitation,weather_code,wind_speed_10m"
+)
 
 WEATHER_CODES = {
     0: "clear sky",
@@ -55,10 +60,7 @@ async def get_current_weather(location: str) -> dict[str, Any]:
             params={
                 "latitude": geocoded["latitude"],
                 "longitude": geocoded["longitude"],
-                "current": (
-                    "temperature_2m,relative_humidity_2m,apparent_temperature,"
-                    "precipitation,weather_code,wind_speed_10m"
-                ),
+                "current": CURRENT_FIELDS,
                 "timezone": "auto",
             },
         )
@@ -88,6 +90,7 @@ async def get_current_weather(location: str) -> dict[str, Any]:
         "weather_code": weather_code,
         "conditions": WEATHER_CODES.get(weather_code, "unknown conditions"),
         "source": "Open-Meteo",
+        "source_url": _forecast_url(geocoded),
     }
 
 
@@ -121,3 +124,15 @@ def _with_unit(value: Any, unit: str | None) -> str | None:
     if value is None:
         return None
     return f"{value} {unit}" if unit else str(value)
+
+
+def _forecast_url(location: dict[str, Any]) -> str:
+    query = urlencode(
+        {
+            "latitude": location["latitude"],
+            "longitude": location["longitude"],
+            "current": CURRENT_FIELDS,
+            "timezone": "auto",
+        }
+    )
+    return f"{FORECAST_URL}?{query}"
