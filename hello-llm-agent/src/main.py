@@ -6,7 +6,7 @@ from typing import Any, cast
 
 import httpx
 from dotenv import load_dotenv
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, BadRequestError, NotFoundError
 from openai.types.responses import (
     FunctionToolParam,
     Response as OpenAIResponse,
@@ -76,26 +76,53 @@ SUGGESTED_PROMPTS = [
 @app.on_message
 async def handle_message(ctx: ActivityContext[MessageActivity]) -> None:
     """Answer Teams messages with an LLM-generated response."""
+    # Strip @mentions so commands picked from the Teams command list work in
+    # team/group scope, where the bot's @mention is prepended to text.
+    ctx.activity.strip_mentions_text()
     user_text = (ctx.activity.text or "").strip()
+    ctx.logger.info("incoming text=%r", user_text)
 
     if not user_text:
         await _send_ai_text(ctx, "Send me a message and I will answer with an LLM.")
+        return
+
+    if _is_forget_command(user_text):
+        await ctx.storage.async_delete(_memory_key(ctx))
+        await _send_ai_text(ctx, "OK, I've cleared our conversation history.")
         return
 
     if _is_who_am_i_question(user_text):
         await _handle_who_am_i_from_teams(ctx)
         return
 
-    response = await _stream_llm_text(
-        ctx,
-        instructions=(
-            "You are a concise assistant running inside Microsoft Teams. "
-            "Answer clearly and keep responses short unless the user asks for detail. "
-            "When the user asks for current weather, use the get_current_weather tool."
-        ),
-        input=cast(ResponseInputParam, user_text),
-        tools=[WEATHER_TOOL],
+    memory_key = _memory_key(ctx)
+    previous_id = await ctx.storage.async_get(memory_key)
+    ctx.logger.info("memory load key=%s previous_id=%s", memory_key, previous_id)
+
+    primary_instructions = (
+        "You are a concise assistant running inside Microsoft Teams. "
+        "Answer clearly and keep responses short unless the user asks for detail. "
+        "When the user asks for current weather, use the get_current_weather tool."
     )
+
+    try:
+        response = await _stream_llm_text(
+            ctx,
+            instructions=primary_instructions,
+            input=cast(ResponseInputParam, user_text),
+            tools=[WEATHER_TOOL],
+            previous_response_id=previous_id,
+        )
+    except (NotFoundError, BadRequestError):
+        # Stored response is unusable — expired (≈30 day TTL) or has
+        # unfulfilled tool calls. Drop it and start a fresh chain.
+        await ctx.storage.async_delete(memory_key)
+        response = await _stream_llm_text(
+            ctx,
+            instructions=primary_instructions,
+            input=cast(ResponseInputParam, user_text),
+            tools=[WEATHER_TOOL],
+        )
 
     tool_calls = [
         item
@@ -106,6 +133,30 @@ async def handle_message(ctx: ActivityContext[MessageActivity]) -> None:
         weather_results = [await _run_weather_tool(call) for call in tool_calls]
         weather_result = weather_results[0]
         if "error" not in weather_result:
+            completion = await client.responses.create(
+                model=model,
+                instructions=(
+                    "A weather card was rendered for the user. "
+                    "Reply with a single short acknowledgement; the user does not see this text."
+                ),
+                previous_response_id=response.id,
+                input=cast(
+                    ResponseInputParam,
+                    [
+                        {
+                            "type": "function_call_output",
+                            "call_id": call.call_id,
+                            "output": json.dumps(result),
+                        }
+                        for call, result in zip(tool_calls, weather_results, strict=True)
+                    ],
+                ),
+                max_output_tokens=32,
+            )
+            await ctx.storage.async_set(memory_key, completion.id)
+            ctx.logger.info(
+                "memory save (post-card) key=%s response_id=%s", memory_key, completion.id
+            )
             await ctx.send(create_weather_card(weather_result))
             return
 
@@ -132,6 +183,8 @@ async def handle_message(ctx: ActivityContext[MessageActivity]) -> None:
             previous_response_id=response.id,
         )
 
+    await ctx.storage.async_set(memory_key, response.id)
+    ctx.logger.info("memory save key=%s response_id=%s", memory_key, response.id)
     await _finalize_ai_stream(ctx)
 
 
@@ -209,6 +262,28 @@ async def _send_ai_text(ctx: ActivityContext[MessageActivity], text: str) -> Non
     await ctx.send(message)
 
 
+def _memory_key(ctx: ActivityContext[MessageActivity]) -> str:
+    sender = ctx.activity.from_
+    conversation = ctx.activity.conversation
+    user_id = sender.aad_object_id or sender.id or "unknown_user"
+    conv_id = conversation.id or "unknown_conversation"
+    return f"prev_resp:{user_id}:{conv_id}"
+
+
+def _is_forget_command(text: str) -> bool:
+    normalized = text.strip().lower().rstrip("?!.")
+    return normalized in {
+        "/forget",
+        "/reset",
+        "forget",
+        "reset",
+        # Also match the manifest command description, in case Teams sends
+        # the description text instead of the title from the command picker.
+        "clear conversation memory",
+        "clear memory",
+    }
+
+
 def _is_who_am_i_question(text: str) -> bool:
     normalized = text.strip().lower().rstrip("?!.")
     return normalized in {
@@ -217,6 +292,8 @@ def _is_who_am_i_question(text: str) -> bool:
         "/whoami",
         "what is my name",
         "what's my name",
+        # Manifest command description fallback.
+        "show what teams knows about you",
     }
 
 
