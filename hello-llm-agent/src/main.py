@@ -25,6 +25,7 @@ load_dotenv(REPO_DIR / ".env")
 load_dotenv(APP_DIR / ".env", override=True)
 
 app = App()
+app.tab("about", str(APP_DIR / "static" / "about"))
 client = AsyncOpenAI()
 model = os.getenv("OPENAI_MODEL", "gpt-5.2")
 

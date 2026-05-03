@@ -294,7 +294,80 @@ npx @microsoft/teams.cli@preview app get \
 
 Because the app version is auto-bumped, reinstalling or updating the app in Teams may be required before the new scope is visible.
 
-## 13. Download an App Package for an Admin
+## 13. Add a Static Personal Tab
+
+The Python SDK can serve static pages from the bot server. Register a local folder as a tab:
+
+```python
+app.tab("about", str(APP_DIR / "static" / "about"))
+```
+
+With an `index.html` file at:
+
+```text
+hello-llm-agent/static/about/index.html
+```
+
+The page is served at:
+
+```text
+https://<your-host>/tabs/about/
+```
+
+For local ngrok testing:
+
+```text
+https://<your-ngrok-domain>/tabs/about/
+```
+
+To expose the page as a personal Teams tab, download and edit the Teams manifest:
+
+```bash
+npx @microsoft/teams.cli@preview app manifest download \
+  <teams-app-id> \
+  .teams/manifest.current.json
+```
+
+Add a custom static tab:
+
+```json
+{
+  "entityId": "homeTab",
+  "name": "Home",
+  "contentUrl": "https://<your-ngrok-domain>/tabs/about/",
+  "websiteUrl": "https://<your-ngrok-domain>/tabs/about/",
+  "scopes": ["personal"]
+}
+```
+
+Keep the reserved bot chat tab if you want to control tab ordering:
+
+```json
+{
+  "entityId": "conversations",
+  "scopes": ["personal"]
+}
+```
+
+Important: `about` and `conversations` are reserved `staticTabs[].entityId` values. Reserved tabs must not specify a `name` property. For a custom tab with a display name, use a non-reserved `entityId`, such as `homeTab`.
+
+Bump the manifest version, then upload it:
+
+```bash
+npx @microsoft/teams.cli@preview app manifest upload \
+  .teams/manifest.current.json \
+  <teams-app-id>
+```
+
+Validated result:
+
+```text
+Manifest uploaded
+```
+
+Reinstalling or updating the app in Teams may be required before the tab appears.
+
+## 14. Download an App Package for an Admin
 
 The Teams CLI can download a Teams app package ZIP for the registered app:
 

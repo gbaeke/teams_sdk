@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Hello LLM Agent</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        font-family:
+          "Segoe UI",
+          system-ui,
+          -apple-system,
+          sans-serif;
+        line-height: 1.5;
+      }
+
+      body {
+        margin: 0;
+        background: Canvas;
+        color: CanvasText;
+      }
+
+      main {
+        max-width: 760px;
+        margin: 0 auto;
+        padding: 32px 24px;
+      }
+
+      h1 {
+        margin: 0 0 8px;
+        font-size: 28px;
+        line-height: 1.2;
+      }
+
+      p {
+        margin: 0 0 18px;
+      }
+
+      ul {
+        margin: 0;
+        padding-left: 22px;
+      }
+
+      li {
+        margin: 8px 0;
+      }
+
+      code {
+        font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+        font-size: 0.95em;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Hello LLM Agent</h1>
+      <p>
+        This Teams bot was built with the Microsoft Teams SDK for Python and the
+        OpenAI Responses API.
+      </p>
+      <ul>
+        <li>Teams messages are handled by <code>microsoft-teams-apps</code>.</li>
+        <li>LLM responses and tool calling use the official OpenAI Python SDK.</li>
+        <li>Weather data comes from Open-Meteo and is rendered as an Adaptive Card.</li>
+        <li><code>who am I?</code> uses Teams activity metadata, without Graph OAuth.</li>
+      </ul>
+    </main>
+  </body>
+</html>
