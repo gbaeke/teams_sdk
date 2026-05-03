@@ -267,7 +267,34 @@ Open the install link printed by `teams app create`, add the app in Teams, then 
 
 If the local app logs show `POST /api/messages HTTP/1.1" 500 Internal Server Error`, first restart the Python app so it picks up the Teams credentials written to `.env`.
 
-## 12. Download an App Package for an Admin
+## 12. Enable Copilot Scope
+
+To make the app available in Copilot surfaces supported by the Teams app manifest, update the app scopes:
+
+```bash
+npx @microsoft/teams.cli@preview app update \
+  <teams-app-id> \
+  --scopes personal,team,copilot
+```
+
+Validated output shape:
+
+```text
+Scopes updated: personal, team, copilot
+Version auto-bumped: <old-version> → <new-version> — reinstall may be needed
+```
+
+Get the install link again:
+
+```bash
+npx @microsoft/teams.cli@preview app get \
+  <teams-app-id> \
+  --install-link
+```
+
+Because the app version is auto-bumped, reinstalling or updating the app in Teams may be required before the new scope is visible.
+
+## 13. Download an App Package for an Admin
 
 The Teams CLI can download a Teams app package ZIP for the registered app:
 
