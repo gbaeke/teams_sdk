@@ -12,7 +12,10 @@ from openai.types.responses import (
     Response as OpenAIResponse,
     ResponseFunctionToolCall,
     ResponseInputParam,
+    WebSearchToolParam,
 )
+from openai.types.responses.response_output_text import AnnotationURLCitation
+from openai.types.responses.response_output_message import ResponseOutputMessage
 
 from microsoft_teams.api import (
     CardAction,
@@ -54,11 +57,18 @@ WEATHER_TOOL: FunctionToolParam = {
     "strict": True,
 }
 
+WEB_SEARCH_TOOL: WebSearchToolParam = {"type": "web_search"}
+
 SUGGESTED_PROMPTS = [
     CardAction(
         type=CardActionType.IM_BACK,
         title="Weather in Paris",
         value="weather in Paris",
+    ),
+    CardAction(
+        type=CardActionType.IM_BACK,
+        title="Latest AI news",
+        value="search the web for the latest AI news today",
     ),
     CardAction(
         type=CardActionType.IM_BACK,
@@ -102,7 +112,9 @@ async def handle_message(ctx: ActivityContext[MessageActivity]) -> None:
     primary_instructions = (
         "You are a concise assistant running inside Microsoft Teams. "
         "Answer clearly and keep responses short unless the user asks for detail. "
-        "When the user asks for current weather, use the get_current_weather tool."
+        "When the user asks for current weather, use the get_current_weather tool. "
+        "When the user asks about current events, recent news, or anything that "
+        "needs up-to-date information from the web, use the web_search tool."
     )
 
     try:
@@ -110,7 +122,7 @@ async def handle_message(ctx: ActivityContext[MessageActivity]) -> None:
             ctx,
             instructions=primary_instructions,
             input=cast(ResponseInputParam, user_text),
-            tools=[WEATHER_TOOL],
+            tools=[WEATHER_TOOL, WEB_SEARCH_TOOL],
             previous_response_id=previous_id,
         )
     except (NotFoundError, BadRequestError):
@@ -121,7 +133,7 @@ async def handle_message(ctx: ActivityContext[MessageActivity]) -> None:
             ctx,
             instructions=primary_instructions,
             input=cast(ResponseInputParam, user_text),
-            tools=[WEATHER_TOOL],
+            tools=[WEATHER_TOOL, WEB_SEARCH_TOOL],
         )
 
     tool_calls = [
@@ -185,6 +197,13 @@ async def handle_message(ctx: ActivityContext[MessageActivity]) -> None:
 
     await ctx.storage.async_set(memory_key, response.id)
     ctx.logger.info("memory save key=%s response_id=%s", memory_key, response.id)
+
+    citations = _extract_url_citations(response)
+    if citations:
+        footer_lines = ["", "", "**Sources:**"]
+        footer_lines.extend(f"- [{c.title or c.url}]({c.url})" for c in citations)
+        ctx.stream.emit("\n".join(footer_lines))
+
     await _finalize_ai_stream(ctx)
 
 
@@ -215,12 +234,29 @@ async def _stream_llm_text(
         if event.type == "response.output_text.delta":
             if event.delta:
                 ctx.stream.emit(event.delta)
+        elif event.type == "response.web_search_call.in_progress":
+            ctx.stream.update("Searching the web…")
+        elif event.type == "response.web_search_call.searching":
+            ctx.stream.update("Reading web results…")
         elif event.type == "response.completed":
             final_response = event.response
 
     if final_response is None:
         raise RuntimeError("Response stream ended without a completion event.")
     return final_response
+
+
+def _extract_url_citations(response: OpenAIResponse) -> list[AnnotationURLCitation]:
+    """Pull URL citations out of a Responses API response (de-duplicated by URL)."""
+    seen: dict[str, AnnotationURLCitation] = {}
+    for item in response.output:
+        if not isinstance(item, ResponseOutputMessage):
+            continue
+        for part in item.content:
+            for annotation in getattr(part, "annotations", []) or []:
+                if isinstance(annotation, AnnotationURLCitation) and annotation.url not in seen:
+                    seen[annotation.url] = annotation
+    return list(seen.values())
 
 
 async def _finalize_ai_stream(ctx: ActivityContext[MessageActivity]) -> None:
